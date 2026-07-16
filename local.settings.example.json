@@ -1,0 +1,12 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "FUNCTIONS_WORKER_RUNTIME": "node",
+    "AzureWebJobsStorage": "replace-with-local-storage-connection",
+    "AZURE_INCIDENT_QUEUE_NAME": "taski-incident-events",
+    "TASKI_INTERNAL_BASE_URL": "http://localhost:3000",
+    "TASKI_INCIDENT_KEY_ID": "replace-with-key-id",
+    "TASKI_INCIDENT_SECRET": "replace-with-at-least-32-utf8-bytes",
+    "TASKI_REQUEST_TIMEOUT_MS": "10000"
+  }
+}

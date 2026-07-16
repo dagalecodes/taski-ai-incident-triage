@@ -1,31 +1,28 @@
-# Target two-minute demo script
+# Batch 4 demo script
 
-This is the intended demo after later batches land. Batch 1 currently supports only the deterministic local replay fallback.
+Batch 4 is a local, tested implementation. Do not describe the Azure path as deployed or live.
 
-## Full live path
+## Network-free demonstration
 
-1. Show the disposable demo API healthy and the designated Taski group open.
-2. Make the demo API unhealthy.
-3. Azure Monitor detects the failure and sends Common Alert Schema to the authenticated receiver.
-4. The receiver validates, normalizes, deduplicates, creates the initial incident, and queues triage.
-5. The Taski card progresses from Alert received to Investigating without blocking normal messages.
-6. The read-only worker returns bounded evidence, probable cause, confidence, and recommended human actions.
-7. A participant acknowledges the incident and explicitly approves Create Task.
-8. Restore the demo API; the resolved Azure event updates the same incident.
-
-Do not present this live path as implemented until its receiver, queue, worker, Taski integration, and Azure resources are complete and verified.
-
-## Simulated Azure alert fallback
-
-If live alert delivery is unavailable in a later batch, submit the sanitized fired and resolved fixtures through the same authenticated receiver. Clearly label the input as simulated while preserving the production validation and queue path.
-
-## Batch 1 deterministic replay fallback
-
-Run locally:
+1. Show `src/functions/receiveAzureAlert.ts` registering a function-authenticated POST receiver.
+2. Run the fired and resolved replay commands to demonstrate unchanged Batch 1 normalization.
+3. Show tests proving the receiver assigns only normalized canonical JSON to its queue output.
+4. Show tests proving the processor validates again and signs the exact bytes sent to Taski.
+5. Show tests for `created`, `updated`, `duplicate`, `stale`, timeout, network, authentication, rate-limit, server, and malformed-response handling.
+6. Show `host.json`: plain message encoding, five dequeue attempts, and poison-queue behavior.
 
 ```powershell
+npm.cmd run typecheck
+npm.cmd run build
+npm.cmd run test:run
 npm.cmd run --silent replay:alert -- test/fixtures/azure-alert-fired.json
 npm.cmd run --silent replay:alert -- test/fixtures/azure-alert-resolved.json
 ```
 
-Explain that the command performs local parsing, validation, normalization, and deterministic delivery-ID generation only. It does not contact Azure, OpenAI, Taski, or a queue. Show that the reordered duplicate fixture produces the fired delivery ID and that invalid input exits nonzero.
+Clearly state that tests inject output bindings, clocks, and HTTP transport. They do not contact Azure or Taski.
+
+## Future live demonstration
+
+A later deployment may connect an Azure Monitor Action Group to the Function URL/key, use a real Storage Queue, and forward to Taski. That requires separately provisioned Azure resources, secrets, RBAC, networking, Taski configuration, and operational verification.
+
+OpenAI diagnosis, diagnostic tools, Application Insights, and remediation are not part of Batch 4. A Batch 5 AI step may run only after incident persistence and must remain read-only and contract-bound.

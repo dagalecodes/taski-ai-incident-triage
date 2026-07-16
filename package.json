@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Contract-first Azure Monitor incident triage foundation for Taski.",
+  "main": "dist/src/functions/*.js",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -16,6 +17,7 @@
     "replay:alert": "tsx scripts/replayAlert.ts"
   },
   "dependencies": {
+    "@azure/functions": "^4.16.2",
     "zod": "^4.4.3"
   },
   "devDependencies": {

@@ -1,40 +1,50 @@
 # Architecture
 
-## Target end-to-end path
+## Batch 4 queue-first path
 
 ```mermaid
 flowchart LR
-  monitor["Azure Monitor Action Group"] --> receiver["Authenticated Azure receiver"]
-  receiver --> normalize["Validate and normalize alert"]
-  normalize --> queue["Durable incident queue"]
-  queue --> worker["Read-only triage worker"]
-  worker --> result["Strict triage result"]
-  result --> taski["Taski incident API"]
-  taski --> group["Authorized Taski group card"]
-  group --> approval["Human acknowledgement or Create Task approval"]
+  monitor["Azure Monitor Action Group (future)"] --> receiver["HTTP Function: receiveAzureAlert"]
+  receiver --> validate["Validate Common Alert Schema"]
+  validate --> normalize["Normalize allowlisted incident"]
+  normalize --> queue["Azure Queue: taski-incident-events"]
+  queue --> processor["Queue Function: processIncident"]
+  processor --> revalidate["Validate normalized incident again"]
+  revalidate --> sign["Serialize once and sign exact bytes"]
+  sign --> taski["Taski internal incident endpoint"]
 ```
 
-The target is queue-first: receipt and validation must finish without waiting for diagnostics or an AI model. A queued worker can fail or retry without preventing initial incident creation.
+The HTTP receiver assigns only canonical normalized JSON to the queue binding and then returns `202`. It has no Taski client dependency and performs no outbound HTTP request. The queue processor is the sole Taski caller.
 
-## Responsibility boundary
+## Repository boundary
 
-This repository is responsible for Azure-facing intake, Common Alert Schema validation, normalization, deterministic delivery identity, future queue processing, read-only evidence gathering, and strict triage output.
+This repository owns Azure-facing intake, Common Alert Schema validation, normalization, deterministic delivery identity, queue processing, and authenticated delivery. Taski remains a separate database-backed collaboration system and owns group authorization, incident persistence, realtime cards, acknowledgement, and Task creation. No Taski source or database code is copied here.
 
-Taski remains the database-backed collaboration system. It owns users, group authorization, persistent incident presentation, acknowledgement, realtime UI updates, and Task creation. This repository does not copy Taski source or redefine its collaboration model.
+## Function registration and build
 
-## Correlation and idempotency
+The implementation uses the Azure Functions Node.js programming model v4:
 
-- `externalAlertId` is the stable provider alert identity used to correlate fired and resolved states.
-- `condition` distinguishes fired from resolved.
-- `deliveryId` is a SHA-256 digest of canonical stable normalized provider fields.
-- Canonical JSON recursively sorts object keys and preserves array order.
-- `deliveryId` excludes receipt time, local timezone, property order, and randomness.
-- Exact duplicate deliveries produce the same ID; fired and resolved deliveries produce different IDs.
+- `app.http` registers `receiveAzureAlert`;
+- `output.storageQueue` provides its secondary queue output;
+- `app.storageQueue` registers `processIncident`;
+- `%AZURE_INCIDENT_QUEUE_NAME%` resolves the queue application setting;
+- `AzureWebJobsStorage` is the standard binding connection setting;
+- `package.json` loads both compiled registration modules through `dist/src/functions/*.js`.
 
-Batch 1 calculates identities only. Durable uniqueness constraints, nonce storage, replay windows, and fired/resolved persistence belong to later batches.
+The registrations are thin. Deterministic receiver, processor, signing, and HTTP behavior live in independently tested modules.
 
-## Batch boundaries
+## Message boundaries
 
-Batch 1 contains deterministic contracts, fixtures, tests, documentation, and a local replay CLI. It has no network transport, queue, database, Azure SDK, OpenAI SDK, Taski client, or deployment configuration.
+The queue contains the strict normalized incident only. It contains no raw `alertContext`, `customProperties`, headers, Function key, Taski key, signature, secret, or OpenAI data. `messageEncoding: none` matches the plain canonical JSON string produced by the output binding. The trigger may expose valid JSON as an object; either representation is strictly revalidated.
 
-Later batches may add, in order: authenticated receiver, durable queue, incident persistence handoff, read-only evidence tools, strict model invocation, Taski delivery, observability, and production hardening.
+The Taski request body is serialized exactly once after queue validation. The same immutable bytes are supplied to HMAC and `fetch`.
+
+## Correlation and failure
+
+`externalAlertId` correlates fired and resolved states. `deliveryId` is deterministic over stable provider fields and excludes `receivedAt`. Taski owns durable idempotency and returns `created`, `updated`, `duplicate`, or `stale`; all four are successful queue completion states.
+
+Any malformed queue message, configuration error, timeout, network failure, non-2xx response, redirect, or invalid Taski response throws. Azure retries up to `maxDequeueCount: 5`, then uses the conventional `<queue-name>-poison` queue. There is no custom retry loop or automatic remediation.
+
+## Next batch boundary
+
+Batch 4 does not invoke OpenAI or gather diagnostics. Batch 5 may add read-only AI triage only after the persistent incident handoff exists; it must preserve the queue, authorization, strict contract, and human-approval boundaries.

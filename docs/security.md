@@ -1,46 +1,60 @@
 # Security
 
-## Threat model
+## Trust boundaries
 
-Alert payloads are untrusted input. Threats include forged webhooks, replayed or duplicate deliveries, oversized payloads, prompt injection hidden in provider context, fake secrets, sensitive logs, unsafe tool arguments, and attempts to turn recommendations into automatic remediation.
+Azure Monitor payloads and queue messages are untrusted. The HTTP receiver validates Common Alert Schema, applies a byte bound, and normalizes to an allowlist. The processor independently validates the queue value before signing or networking.
 
-## Controls implemented in Batch 1
+The future Azure Function key and Taski HMAC secret are different credentials:
 
-- Exact Common Alert Schema identifier and required essentials validation
-- Case-insensitive fired/resolved validation with unsupported conditions rejected
-- Exact severity allowlist and deterministic severity mapping
-- Valid timezone-bearing ISO-8601 timestamps
-- Required target resource and resolved timestamp invariants
-- Maximum lengths, array counts, provider-object size, and replay-file size
-- Bounded provider passthrough for alert-type compatibility
-- Deliberately smaller normalized output
-- No propagation of raw `alertContext` or `customProperties`
-- Deterministic canonical digest for future duplicate detection
-- Strict triage objects with unknown fields rejected
-- No command, script, executable payload, tool arguments, chain-of-thought, raw-log, or remediation-result field
-- Literal `requiresHumanApproval: true` on every recommended action
-- Configuration validation only when explicitly called
-- Safe configuration errors that name fields but never values
-- Replay failures do not print rejected payloads or stack traces
-- Synthetic fixtures only
+- A Function key lets a future Action Group invoke the receiver URL.
+- The Taski HMAC secret authenticates the processor's exact request bytes to Taski.
+- Neither credential is placed in the queue or repository examples.
+- This batch creates neither a Function key nor an Action Group.
 
-The malicious fixture demonstrates containment, not secret detection: injection text and fake credentials placed in ignored provider fields do not enter normalized output.
+An Entra-protected secure webhook should replace or strengthen Function-key-only ingress where appropriate for production.
 
-## Deferred controls
+## Exact-body signing
 
-- Azure receiver authentication or Entra protection
-- HMAC body signatures, timestamp windows, nonce storage, and key rotation
-- Durable idempotency and fired/resolved transaction handling
-- Queue access control, poison-message handling, and bounded retries
-- Runtime secret scanning and redaction
-- Approved diagnostic-tool allowlists and resource scoping
-- Prompt construction and prompt-injection isolation
-- OpenAI response parsing and model-call timeouts
-- Taski service authentication and backend authorization
-- Structured privacy-aware logging, correlation IDs, metrics, and tracing
-- Rate limiting and HTTP body limits at the receiver
-- Dependency and deployment security scanning
+The processor validates the normalized object, serializes it once, and retains the resulting UTF-8 bytes. It signs:
 
-## Honest limitations
+```text
+HMAC-SHA256(secret, UTF8(timestamp) + UTF8(".") + exactBodyBytes)
+```
 
-Zod validates shape, bounds, and allowlists; it does not prove content is truthful or secret-free. A deterministic delivery ID is not replay protection until a trusted persistent store enforces uniqueness. Human-approval fields are a contract, not an authorization system. Those controls must be enforced by later runtime components and Taski.
+The same `exactBodyBytes` are passed to `fetch`. Secrets must be 32–4096 UTF-8 bytes, timestamps are positive epoch seconds, and signatures are 64 lowercase hexadecimal characters. Redirect following is disabled, the destination forbids embedded credentials, and HTTPS is required except explicit localhost development.
+
+## Queue content and encoding
+
+The output binding receives a canonical JSON string containing only the normalized incident. `host.json` uses Storage Queue extension bundle 4.x and `messageEncoding: none`, matching plain UTF-8 producer content. The processor rejects unknown fields, unsupported schema versions, malformed JSON, and oversized string messages; it does not repair them.
+
+Raw `alertContext`, `customProperties`, provider headers, authorization data, target credentials, Taski signatures, and secrets never enter the queue. Raw Azure payloads never reach Taski.
+
+## Network and response controls
+
+- Exact Taski endpoint path; normalized trailing slash
+- HTTPS except localhost HTTP
+- No URL credentials, query, or fragment
+- Bounded 1–30 second timeout
+- `redirect: manual`
+- Bounded response body
+- Strict 2xx response schema
+- Only `created`, `updated`, `duplicate`, and `stale` succeed
+- 401, 429, 5xx, timeout, network failure, invalid JSON, unknown status, and extra response fields fail safely
+
+No response body, signature, secret, raw alert, normalized body, target resource ID, request headers, or stack trace is logged.
+
+## Retry and poison handling
+
+Processor failures are thrown so the queue delivery is not acknowledged. The Azure Functions queue extension performs retry; no internal loop exists. `maxDequeueCount` is 5. After that, the runtime moves the message to `<queue-name>-poison`. Logging is limited to safe operational identifiers/categories. Operators must inspect safe metadata and fix configuration or code; no remediation is automatic.
+
+## Remaining hardening
+
+- Deploy and verify Azure resources, RBAC, private networking, and managed identities
+- Configure and rotate real Function/HMAC keys outside source control
+- Add Entra webhook protection, rate limiting, and operational monitoring
+- Add poison-queue operating procedures and privacy-aware telemetry
+- Add runtime secret scanning where required
+- Add only allowlisted read-only diagnostics in a later batch
+- Add strict OpenAI isolation and timeouts only in Batch 5 or later
+
+Zod validates shape and bounds; it does not establish that provider content is truthful. Taski remains responsible for participant authorization and durable incident persistence.
