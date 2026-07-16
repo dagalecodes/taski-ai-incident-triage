@@ -2,6 +2,38 @@
 
 Taski AI Incident Triage is a contract-first Azure Monitor incident intake service for Taski. This repository owns alert validation, normalization, queued delivery, and authenticated forwarding; it does not contain or replace the Taski application.
 
+## Batch 5C Phase 1 controlled integration harness
+
+The Batch 5C CLI reuses the production alert schema, normalization, queue processor, Taski client, exact-byte signing, response schemas, triage schema, and final output guardrail. It is a pre-deployment validation harness, not a second pipeline.
+
+The default is a deterministic dry run with simulated strict Taski responses and zero network calls:
+
+```powershell
+npm.cmd run --silent demo:triage
+npm.cmd run --silent demo:triage -- --scenario duplicate-terminal
+npm.cmd run --silent demo:triage -- --scenario resolved
+```
+
+Other network-free scenarios are `stale`, `model-failure`, and `result-delivery-failure`. Output is one safe JSON summary containing only mode, scenario, incident correlation/status, whether triage ran, safe delivery status, and safe analysis identity. It never prints diagnosis prose, request bodies, headers, signatures, raw responses, diagnostic context, keys, or secrets.
+
+The following deterministic staging command is documented for later operator use only. **Do not run until manually authorized.** Both delivery flags are mandatory, OpenAI is not called, and the destination must be exactly `https://taski-staging.azurewebsites.net` or `http://localhost:3000`:
+
+```powershell
+npm.cmd run --silent demo:triage -- --deliver-staging --confirm-staging-delivery
+```
+
+Required environment variable names are `TASKI_INTERNAL_BASE_URL`, `TASKI_INCIDENT_KEY_ID`, `TASKI_INCIDENT_SECRET`, and `TRIAGE_POLICY_VERSION`; `TASKI_REQUEST_TIMEOUT_MS` is optional. Secrets are never accepted as CLI arguments.
+
+Live OpenAI staging mode is optional, billable, and separately gated. **Do not run without explicit authorization for both staging delivery and the OpenAI charge:**
+
+```powershell
+npm.cmd run --silent demo:triage -- --deliver-staging --confirm-staging-delivery --use-openai --confirm-openai-charge
+```
+
+It additionally requires `OPENAI_API_KEY` and `OPENAI_MODEL`; `OPENAI_REQUEST_TIMEOUT_MS`, `OPENAI_MAX_TURNS`, and `OPENAI_TRACING_ENABLED` are optional bounded settings. Tracing remains disabled unless explicitly enabled.
+
+The deterministic fallback is low-confidence, contains no evidence, requires human approval for every recommendation, and states that neither live telemetry nor OpenAI was used. Dry runs create no state and need no cleanup. An authorized staging delivery intentionally persists synthetic incident data in Taski; no automatic rollback or deletion is attempted, so any cleanup must be separately authorized and performed through Taski's normal controls. The harness creates no Azure resources and performs no remediation.
+
 ## Batch 5B local AI worker
 
 Batch 5B adds an undeployed, guarded incident-triage worker after Taski incident persistence. It uses one Agent from the official `@openai/agents` SDK and imports `src/contracts/triageResult.ts` directly as its structured `outputType`. It does not use handoffs, MCP, hosted shell, computer use, code interpreter, arbitrary network tools, or remediation.

@@ -1,5 +1,37 @@
 # Batch 5B demo script
 
+## Batch 5C Phase 1 controlled harness
+
+Start with the mandatory network-free default and safe scenario checks:
+
+```powershell
+npm.cmd run --silent demo:triage
+npm.cmd run --silent demo:triage -- --scenario duplicate-terminal
+npm.cmd run --silent demo:triage -- --scenario resolved
+npm.cmd run --silent demo:triage -- --scenario stale
+npm.cmd run --silent demo:triage -- --scenario model-failure
+```
+
+Expected output is one JSON summary with safe correlation and status fields only. The default fired-created scenario runs deterministic guarded triage; duplicate-terminal, resolved, and stale skip it. `result-delivery-failure` exits nonzero with one safe error. No dry-run scenario uses the injected real transport.
+
+The deterministic staging command below is for a later authorized session. **Do not run until manually authorized:**
+
+```powershell
+npm.cmd run --silent demo:triage -- --deliver-staging --confirm-staging-delivery
+```
+
+It requires environment names `TASKI_INTERNAL_BASE_URL`, `TASKI_INCIDENT_KEY_ID`, `TASKI_INCIDENT_SECRET`, and `TRIAGE_POLICY_VERSION`, with optional `TASKI_REQUEST_TIMEOUT_MS`. Never place their values in command history or documentation. Only the exact staging host or bounded localhost destination is accepted.
+
+The optional live OpenAI path is billable and requires separate authorization:
+
+```powershell
+npm.cmd run --silent demo:triage -- --deliver-staging --confirm-staging-delivery --use-openai --confirm-openai-charge
+```
+
+It additionally requires `OPENAI_API_KEY` and `OPENAI_MODEL`; timeout, max-turn, and tracing settings use the existing bounded environment contract. Tracing remains disabled by default. Never run this command as part of automated verification.
+
+Dry runs persist nothing. Authorized staging mode persists synthetic Taski incident/analysis state and has no automatic rollback; cleanup requires a separate authorized Taski action. The harness writes no temporary payload, secret, or OpenAI response files, creates no Azure resources, and performs no remediation.
+
 Batch 5B is a local, deterministic demonstration. Do not describe OpenAI, Azure, Taski, queues, or diagnostic providers as live or deployed.
 
 Show that:

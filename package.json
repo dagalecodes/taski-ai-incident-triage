@@ -14,7 +14,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest",
     "test:run": "vitest run",
-    "replay:alert": "tsx scripts/replayAlert.ts"
+    "replay:alert": "tsx scripts/replayAlert.ts",
+    "demo:triage": "tsx scripts/runTriageDemo.ts"
   },
   "dependencies": {
     "@azure/functions": "^4.16.2",
