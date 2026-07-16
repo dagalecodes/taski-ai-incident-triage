@@ -3,16 +3,33 @@ import type { SignedTaskiRequest } from '../security/taskiSignature.js';
 import { SafePipelineError, safeError } from '../shared/safeErrors.js';
 
 const MAX_RESPONSE_BYTES = 64 * 1024;
+const analysisIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
+const analysisStatusSchema = z.enum([
+  'pending', 'queued', 'investigating', 'ready', 'failed', 'not_required',
+]);
 
 const taskiResponseSchema = z.object({
   status: z.enum(['created', 'updated', 'duplicate', 'stale']),
   incidentId: z.number().int().positive(),
   messageId: z.number().int().positive(),
   alertState: z.enum(['fired', 'resolved']),
+  analysisId: analysisIdSchema.nullable(),
+  analysisStatus: analysisStatusSchema,
   version: z.number().int().positive(),
 }).strict();
 
 export type TaskiIncidentResponse = z.infer<typeof taskiResponseSchema>;
+
+const taskiTriageResponseSchema = z.object({
+  status: z.enum(['updated', 'duplicate', 'stale']),
+  incidentId: z.number().int().positive(),
+  messageId: z.number().int().positive(),
+  alertState: z.enum(['fired', 'resolved']),
+  analysisStatus: analysisStatusSchema,
+  version: z.number().int().positive(),
+}).strict();
+
+export type TaskiTriageResponse = z.infer<typeof taskiTriageResponseSchema>;
 
 export interface TaskiClientOptions {
   baseUrl: string;
@@ -20,7 +37,7 @@ export interface TaskiClientOptions {
   fetchImplementation: typeof fetch;
 }
 
-export function taskiIncidentUrl(baseUrl: string): string {
+function taskiIntegrationUrl(baseUrl: string, path: string): string {
   let parsed: URL;
   try {
     parsed = new URL(baseUrl);
@@ -34,8 +51,11 @@ export function taskiIncidentUrl(baseUrl: string): string {
     throw safeError('configuration');
   }
   const normalized = parsed.toString().replace(/\/+$/, '');
-  return `${normalized}/api/incidents/integrations/azure-monitor`;
+  return `${normalized}/api/incidents/integrations/${path}`;
 }
+
+export const taskiIncidentUrl = (baseUrl: string): string => taskiIntegrationUrl(baseUrl, 'azure-monitor');
+export const taskiTriageResultUrl = (baseUrl: string): string => taskiIntegrationUrl(baseUrl, 'triage-results');
 
 async function readBoundedResponse(response: Response): Promise<string> {
   const declaredLength = Number(response.headers.get('content-length'));
@@ -63,14 +83,16 @@ async function readBoundedResponse(response: Response): Promise<string> {
   return new TextDecoder().decode(combined);
 }
 
-export async function sendTaskiIncident(
+async function sendSignedTaskiRequest<T>(
   signed: SignedTaskiRequest,
   options: TaskiClientOptions,
-): Promise<TaskiIncidentResponse> {
+  url: string,
+  responseSchema: z.ZodType<T>,
+): Promise<T> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
   try {
-    const response = await options.fetchImplementation(taskiIncidentUrl(options.baseUrl), {
+    const response = await options.fetchImplementation(url, {
       method: 'POST', headers: signed.headers, body: Uint8Array.from(signed.bodyBytes),
       redirect: 'manual', signal: controller.signal,
     });
@@ -83,7 +105,7 @@ export async function sendTaskiIncident(
       if (controller.signal.aborted || (error instanceof Error && error.name === 'AbortError')) throw error;
       throw safeError('remote');
     }
-    const parsed = taskiResponseSchema.safeParse(body);
+    const parsed = responseSchema.safeParse(body);
     if (!parsed.success) throw safeError('remote');
     return parsed.data;
   } catch (error) {
@@ -95,4 +117,19 @@ export async function sendTaskiIncident(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+
+export async function sendTaskiIncident(
+  signed: SignedTaskiRequest,
+  options: TaskiClientOptions,
+): Promise<TaskiIncidentResponse> {
+  return sendSignedTaskiRequest(signed, options, taskiIncidentUrl(options.baseUrl), taskiResponseSchema);
+}
+
+export async function sendTaskiTriageResult(
+  signed: SignedTaskiRequest,
+  options: TaskiClientOptions,
+): Promise<TaskiTriageResponse> {
+  return sendSignedTaskiRequest(signed, options, taskiTriageResultUrl(options.baseUrl), taskiTriageResponseSchema);
 }

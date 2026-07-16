@@ -29,12 +29,46 @@ const environmentSchema = z.object({
   TASKI_REQUEST_TIMEOUT_MS: z.string().regex(/^\d+$/).optional()
     .transform((value) => Number(value ?? '10000'))
     .pipe(z.number().int().min(1_000).max(30_000)),
+  OPENAI_API_KEY: z.string().min(20).max(4_096).optional(),
+  OPENAI_MODEL: z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/).optional(),
+  OPENAI_REQUEST_TIMEOUT_MS: z.string().regex(/^\d+$/).optional()
+    .transform((value) => Number(value ?? '30000'))
+    .pipe(z.number().int().min(1_000).max(120_000)),
+  OPENAI_MAX_TURNS: z.string().regex(/^\d+$/).optional()
+    .transform((value) => Number(value ?? '6'))
+    .pipe(z.number().int().min(1).max(8)),
+  OPENAI_TRACING_ENABLED: z.enum(['true', 'false']).optional()
+    .transform((value) => value === 'true'),
+  TRIAGE_POLICY_VERSION: z.string().min(1).max(48)
+    .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/).optional(),
 }).strict();
 
 const pipelineSettings = [
   'AzureWebJobsStorage', 'AZURE_INCIDENT_QUEUE_NAME', 'TASKI_INTERNAL_BASE_URL',
   'TASKI_INCIDENT_KEY_ID', 'TASKI_INCIDENT_SECRET',
+  'OPENAI_API_KEY', 'OPENAI_MODEL', 'TRIAGE_POLICY_VERSION',
 ] as const;
+
+const taskiSettingsSchema = environmentSchema.pick({
+  TASKI_INTERNAL_BASE_URL: true,
+  TASKI_INCIDENT_KEY_ID: true,
+  TASKI_INCIDENT_SECRET: true,
+  TASKI_REQUEST_TIMEOUT_MS: true,
+}).required({
+  TASKI_INTERNAL_BASE_URL: true,
+  TASKI_INCIDENT_KEY_ID: true,
+  TASKI_INCIDENT_SECRET: true,
+});
+
+const triageIdentitySchema = environmentSchema.pick({ TRIAGE_POLICY_VERSION: true }).required();
+
+const openAIExecutionSchema = environmentSchema.pick({
+  OPENAI_API_KEY: true,
+  OPENAI_MODEL: true,
+  OPENAI_REQUEST_TIMEOUT_MS: true,
+  OPENAI_MAX_TURNS: true,
+  OPENAI_TRACING_ENABLED: true,
+}).required({ OPENAI_API_KEY: true, OPENAI_MODEL: true });
 
 export type RuntimeEnvironment = z.infer<typeof environmentSchema>;
 
@@ -43,6 +77,48 @@ export class ConfigurationError extends Error {
     super(message);
     this.name = 'ConfigurationError';
   }
+}
+
+function recognizedValues(
+  suppliedEnvironment: Readonly<Record<string, string | undefined>>,
+  fields: ReadonlySet<string>,
+): Record<string, string | undefined> {
+  return Object.fromEntries(Object.entries(suppliedEnvironment).filter(([key]) => fields.has(key)));
+}
+
+function configurationError(error: z.ZodError): ConfigurationError {
+  const fields = [...new Set(error.issues.map((issue) => issue.path.join('.') || 'environment'))];
+  return new ConfigurationError(`Invalid configuration fields: ${fields.join(', ')}.`);
+}
+
+export function validateTaskiEnvironment(
+  suppliedEnvironment: Readonly<Record<string, string | undefined>>,
+): z.infer<typeof taskiSettingsSchema> {
+  const parsed = taskiSettingsSchema.safeParse(recognizedValues(
+    suppliedEnvironment, new Set(Object.keys(taskiSettingsSchema.shape)),
+  ));
+  if (!parsed.success) throw configurationError(parsed.error);
+  return parsed.data;
+}
+
+export function validateTriageIdentityEnvironment(
+  suppliedEnvironment: Readonly<Record<string, string | undefined>>,
+): z.infer<typeof triageIdentitySchema> {
+  const parsed = triageIdentitySchema.safeParse(recognizedValues(
+    suppliedEnvironment, new Set(Object.keys(triageIdentitySchema.shape)),
+  ));
+  if (!parsed.success) throw configurationError(parsed.error);
+  return parsed.data;
+}
+
+export function validateOpenAIEnvironment(
+  suppliedEnvironment: Readonly<Record<string, string | undefined>>,
+): z.infer<typeof openAIExecutionSchema> {
+  const parsed = openAIExecutionSchema.safeParse(recognizedValues(
+    suppliedEnvironment, new Set(Object.keys(openAIExecutionSchema.shape)),
+  ));
+  if (!parsed.success) throw configurationError(parsed.error);
+  return parsed.data;
 }
 
 export function validateEnvironment(
@@ -54,8 +130,7 @@ export function validateEnvironment(
   );
   const parsed = environmentSchema.safeParse(recognized);
   if (!parsed.success) {
-    const fields = [...new Set(parsed.error.issues.map((issue) => issue.path.join('.') || 'environment'))];
-    throw new ConfigurationError(`Invalid configuration fields: ${fields.join(', ')}.`);
+    throw configurationError(parsed.error);
   }
   if (options.requirePipelineSettings) {
     const missing = pipelineSettings.filter((name) => parsed.data[name] === undefined);

@@ -15,8 +15,8 @@ export interface SignedTaskiRequest {
   timestamp: number;
 }
 
-export function signTaskiIncident(
-  incident: NormalizedIncident,
+export function signTaskiBody(
+  body: unknown,
   timestamp: number,
   config: TaskiSignatureConfig,
 ): SignedTaskiRequest {
@@ -25,7 +25,7 @@ export function signTaskiIncident(
   if (!config.keyId || config.keyId.length > 128) throw safeError('configuration');
   if (!Number.isSafeInteger(timestamp) || timestamp <= 0) throw safeError('configuration');
 
-  const bodyBytes = Buffer.from(canonicalJson(incident), 'utf8');
+  const bodyBytes = Buffer.from(canonicalJson(body), 'utf8');
   const signature = createHmac('sha256', secretBytes)
     .update(Buffer.from(`${timestamp}.`, 'utf8'))
     .update(bodyBytes)
@@ -40,4 +40,12 @@ export function signTaskiIncident(
       'X-Taski-Signature': signature,
     },
   };
+}
+
+export function signTaskiIncident(
+  incident: NormalizedIncident,
+  timestamp: number,
+  config: TaskiSignatureConfig,
+): SignedTaskiRequest {
+  return signTaskiBody(incident, timestamp, config);
 }

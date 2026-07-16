@@ -2,6 +2,39 @@
 
 Taski AI Incident Triage is a contract-first Azure Monitor incident intake service for Taski. This repository owns alert validation, normalization, queued delivery, and authenticated forwarding; it does not contain or replace the Taski application.
 
+## Batch 5B local AI worker
+
+Batch 5B adds an undeployed, guarded incident-triage worker after Taski incident persistence. It uses one Agent from the official `@openai/agents` SDK and imports `src/contracts/triageResult.ts` directly as its structured `outputType`. It does not use handoffs, MCP, hosted shell, computer use, code interpreter, arbitrary network tools, or remediation.
+
+```text
+normalized queue incident
+  -> validate again
+  -> exact-byte HMAC Taski incident ingestion
+  -> resolved or stale: complete without OpenAI
+  -> matching accepted terminal analysisId: complete without OpenAI
+  -> other fired created, updated, or duplicate: guarded triage
+  -> exact-byte HMAC Taski triage-result delivery
+```
+
+Taski returns the current safe `analysisId` and `analysisStatus` with incident ingestion. An exact policy-bound ID match in `ready`, `failed`, or `not_required` suppresses a paid rerun after Taski accepted a prior result but its HTTP response was lost. Null, different-policy, and nonterminal identities remain eligible. Taski result-delivery failures and real conflicts are thrown for normal Azure Queue retry and poison handling; there is no internal retry loop.
+
+This recovery check is not a distributed claim or lease. Simultaneous duplicate workers can both begin analysis before either result is accepted, so Batch 5B does not claim exactly-once OpenAI execution.
+
+The five tools are `get_service_health`, `get_recent_error_summary`, `get_resource_metrics`, `get_latest_deployment`, and `get_matching_runbook`. They accept strict empty inputs and receive the current bounded incident through injected providers, preventing model-selected resources. Batch 5B's runtime provider returns safe unavailable results; deterministic tests inject sanitized fixtures. Real Azure diagnostic providers are deferred to Batch 6.
+
+Input and tool output are bounded, secret-redacted, and stripped of prompt-injection-like instructions. Final evidence must exactly match the tool evidence ledger. Command/script-like actions, secret-bearing output, fabricated evidence, and unsafe references are rejected. Runbook references are plain evidence only, with no clickable action.
+
+Additional required settings are:
+
+- `OPENAI_API_KEY`
+- `OPENAI_MODEL` (explicit; the application does not choose an undocumented default)
+- `OPENAI_REQUEST_TIMEOUT_MS` (default 30000; 1000-120000)
+- `OPENAI_MAX_TURNS` (default 6; 1-8)
+- `OPENAI_TRACING_ENABLED` (default `false`; literal `true` opts in)
+- `TRIAGE_POLICY_VERSION` (included in deterministic `analysisId`)
+
+Agents SDK tracing is disabled by default and sensitive trace data capture remains disabled after opt-in. Enabling tracing may still export workflow/tool operational metadata, so it requires a privacy review. Tests never export traces or make live OpenAI, Azure, Taski, or diagnostic-provider calls.
+
 ## Batch 4 status
 
 Batch 4 implements a local Azure Functions-compatible queue-first pipeline:
@@ -15,7 +48,7 @@ Batch 4 implements a local Azure Functions-compatible queue-first pipeline:
 
 It has not been deployed. No Azure resources, Function key, Action Group, live queue, OpenAI agent, diagnostic tools, AI diagnosis, Application Insights, or remediation are implemented by this batch.
 
-## Implemented flow
+## Batch 4 foundation flow
 
 ```text
 Azure Monitor Action Group (future)
@@ -27,7 +60,7 @@ Azure Monitor Action Group (future)
   -> Taski internal incident endpoint
 ```
 
-The HTTP receiver never calls Taski. Assigning the normalized queue string is the receiver's final side effect before returning `202`. The queue processor is the only Taski caller.
+The HTTP receiver never calls Taski or OpenAI. Assigning the normalized queue string is its final side effect before returning `202`. The queue processor owns Taski delivery and the guarded Batch 5B AI step.
 
 ## Azure Functions model
 
@@ -61,11 +94,13 @@ Runtime settings are validated explicitly at invocation boundaries:
 - `TASKI_INCIDENT_SECRET` (32–4096 UTF-8 bytes)
 - `TASKI_REQUEST_TIMEOUT_MS` (default 10000; allowed 1000–30000)
 
+The queue handler validates Taski transport first and persists the incident before consulting triage identity or OpenAI execution settings. Resolved, already-resolved, and stale alerts therefore do not require OpenAI configuration. For an eligible fired alert with a valid policy identity, missing or invalid OpenAI settings produce a bounded `model_unavailable` result for authenticated Taski delivery; raw values and validation details are never included.
+
 The Azure Function key used by a future Action Group authenticates access to the receiver URL. It is separate from the Taski HMAC secret used only by the queue processor. Production hardening should place the webhook behind appropriate Entra protection where practical.
 
 ## Retry behavior
 
-Processing failures are thrown. Azure Queue trigger retry behavior owns redelivery; there is no internal retry loop. `host.json` sets `maxDequeueCount` to 5 and a bounded visibility timeout. After the configured attempts, the Functions runtime moves the message to `<queue-name>-poison`. No remediation occurs automatically; an operator must inspect safe metadata and correct configuration or code.
+Taski delivery and pipeline failures are thrown. OpenAI failures are converted to a safe failed result, whose Taski delivery must still succeed. A retry skips analysis only for the exact expected terminal identity already accepted by Taski. Azure Queue trigger retry behavior owns redelivery; there is no internal retry loop or exactly-once claim. `host.json` sets `maxDequeueCount` to 5 and a bounded visibility timeout. After the configured attempts, the Functions runtime moves the message to `<queue-name>-poison`. No remediation occurs automatically.
 
 See [architecture](docs/architecture.md), [security](docs/security.md), and the [demo script](docs/demo-script.md).
 

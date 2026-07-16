@@ -1,5 +1,30 @@
 # Architecture
 
+## Batch 5B extension
+
+```mermaid
+flowchart LR
+  queue["Normalized incident queue"] --> validate["Strict validation"]
+  validate --> ingest["Exact-byte HMAC incident ingestion"]
+  ingest --> gate{"Resolved or stale?"}
+  gate -->|yes| done["Complete without AI"]
+  gate -->|eligible fired| identity{"Expected ID already terminal?"}
+  identity -->|yes| done
+  identity -->|no| agent["One guarded OpenAI Agent"]
+  agent --> tools["Five injected read-only tools"]
+  tools --> output["Shared triageResultSchema and evidence guardrails"]
+  output --> sign["Exact-byte HMAC triage result"]
+  sign --> taski["Taski triage-result endpoint"]
+```
+
+The official Agents SDK runs exactly one Agent with the existing Batch 1 schema as `outputType`, a bounded `AbortSignal`, and low `maxTurns`. The worker exposes no handoffs, hosted tools, MCP, shell, filesystem, computer, code execution, or remediation.
+
+Every tool accepts `{}` and derives scope from the current incident. Injected providers implement service health, recent error summary, resource metrics, latest deployment, and matching runbook lookups. Each tool returns at most two evidence entries and the workflow records at most ten total. The current runtime provider returns unavailable; Batch 6 will connect real allowlisted Azure diagnostic providers.
+
+OpenAI timeout/refusal/invalid output is converted to a safe failed envelope. Taski result-delivery failure and real conflict throw. `analysisId` is deterministic over provider, external alert ID, source delivery ID, and policy version. After ingestion, an exact matching `ready`, `failed`, or `not_required` identity proves Taski already accepted that policy-bound analysis and suppresses recreation after a lost response. Null, mismatched, `pending`, `queued`, and `investigating` identities remain eligible.
+
+Taski transport configuration is validated before ingestion. Triage policy identity and OpenAI execution configuration are consulted lazily only for eligible fired incidents. This ordering lets resolved, already-resolved, and stale alerts complete without OpenAI settings. The accepted-identity check is not a distributed claim or lease: simultaneous duplicates can both start OpenAI before either persists a result, and exactly-once model execution is not claimed.
+
 ## Batch 4 queue-first path
 
 ```mermaid
@@ -47,4 +72,4 @@ Any malformed queue message, configuration error, timeout, network failure, non-
 
 ## Next batch boundary
 
-Batch 4 does not invoke OpenAI or gather diagnostics. Batch 5 may add read-only AI triage only after the persistent incident handoff exists; it must preserve the queue, authorization, strict contract, and human-approval boundaries.
+Batch 5B implements the local guarded AI step described above. Batch 6 may connect real Azure Monitor diagnostic adapters only after RBAC, privacy, deployment, and operational review; it must preserve resource scoping, evidence bounds, read-only behavior, and human approval.

@@ -1,24 +1,51 @@
 import { app, type InvocationContext } from '@azure/functions';
-import { validateEnvironment } from '../config/env.js';
+import {
+  validateOpenAIEnvironment,
+  validateTaskiEnvironment,
+  validateTriageIdentityEnvironment,
+} from '../config/env.js';
 import { processIncident } from '../pipeline/processIncident.js';
 import { SafePipelineError, safeError } from '../shared/safeErrors.js';
+import { createOpenAITriageRunner } from '../agent/triageAgent.js';
+import { createUnavailableDiagnosticProvider } from '../diagnostics/tools.js';
 
 export async function processIncidentHandler(message: unknown, context: InvocationContext): Promise<void> {
   try {
-    const environment = validateEnvironment(process.env, { requirePipelineSettings: true });
-    if (!environment.TASKI_INTERNAL_BASE_URL || !environment.TASKI_INCIDENT_KEY_ID
-      || !environment.TASKI_INCIDENT_SECRET) throw safeError('configuration');
+    let taskiEnvironment;
+    try {
+      taskiEnvironment = validateTaskiEnvironment(process.env);
+    } catch {
+      throw safeError('configuration');
+    }
     const processed = await processIncident(
       message,
       {
-        taskiBaseUrl: environment.TASKI_INTERNAL_BASE_URL,
-        keyId: environment.TASKI_INCIDENT_KEY_ID,
-        secret: environment.TASKI_INCIDENT_SECRET,
-        timeoutMs: environment.TASKI_REQUEST_TIMEOUT_MS,
+        taskiBaseUrl: taskiEnvironment.TASKI_INTERNAL_BASE_URL,
+        keyId: taskiEnvironment.TASKI_INCIDENT_KEY_ID,
+        secret: taskiEnvironment.TASKI_INCIDENT_SECRET,
+        timeoutMs: taskiEnvironment.TASKI_REQUEST_TIMEOUT_MS,
       },
       {
         fetchImplementation: fetch,
         currentEpochSeconds: () => Math.floor(Date.now() / 1_000),
+        currentIsoTimestamp: () => new Date().toISOString(),
+        resolveTriagePolicyVersion: () => {
+          try {
+            return validateTriageIdentityEnvironment(process.env).TRIAGE_POLICY_VERSION;
+          } catch {
+            throw safeError('configuration');
+          }
+        },
+        createTriageRunner: () => {
+          const openAI = validateOpenAIEnvironment(process.env);
+          return createOpenAITriageRunner({
+            apiKey: openAI.OPENAI_API_KEY,
+            model: openAI.OPENAI_MODEL,
+            timeoutMs: openAI.OPENAI_REQUEST_TIMEOUT_MS,
+            maxTurns: openAI.OPENAI_MAX_TURNS,
+            tracingEnabled: openAI.OPENAI_TRACING_ENABLED,
+          }, createUnavailableDiagnosticProvider());
+        },
       },
     );
     context.info('Incident forwarded to Taski.', {
@@ -26,6 +53,7 @@ export async function processIncidentHandler(message: unknown, context: Invocati
       condition: processed.incident.condition,
       status: processed.result.status,
       incidentId: processed.result.incidentId,
+      triageStatus: processed.triageResult?.analysisStatus ?? 'skipped',
     });
   } catch (error) {
     const category = error instanceof SafePipelineError ? error.category : 'configuration';

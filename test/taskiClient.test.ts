@@ -15,7 +15,8 @@ const signed = signTaskiIncident(incident, 1_752_659_200, {
   keyId: 'synthetic-key', secret: '0123456789abcdef0123456789abcdef',
 });
 const success = (status: 'created' | 'updated' | 'duplicate' | 'stale') => ({
-  status, incidentId: 7, messageId: 12, alertState: 'fired', version: 1,
+  status, incidentId: 7, messageId: 12, alertState: 'fired',
+  analysisId: null, analysisStatus: 'pending' as const, version: 1,
 });
 
 afterEach(() => {
@@ -70,6 +71,24 @@ describe('Taski HTTP client', () => {
       baseUrl: 'https://taski.example.invalid', timeoutMs: 10_000,
       fetchImplementation: failedFetch as unknown as typeof fetch,
     })).rejects.toThrow('network');
+  });
+
+  it('requires bounded safe analysis identity fields', async () => {
+    const invalidBodies = [
+      { ...success('created'), analysisId: undefined },
+      { ...success('created'), analysisStatus: undefined },
+      { ...success('created'), analysisId: '' },
+      { ...success('created'), analysisId: 'bad identity' },
+      { ...success('created'), analysisId: `analysis:${'x'.repeat(121)}` },
+      { ...success('created'), analysisStatus: 'completed' },
+    ];
+    for (const body of invalidBodies) {
+      const fetchImplementation = vi.fn(async () => new Response(JSON.stringify(body), { status: 200 }));
+      await expect(sendTaskiIncident(signed, {
+        baseUrl: 'https://taski.example.invalid', timeoutMs: 10_000,
+        fetchImplementation: fetchImplementation as unknown as typeof fetch,
+      })).rejects.toThrow('remote');
+    }
   });
 
   it('rejects insecure remote URLs and embedded credentials before fetch', async () => {

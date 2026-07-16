@@ -1,5 +1,17 @@
 # Security
 
+## Batch 5B AI boundary
+
+Alert strings and diagnostic output are untrusted data, never instructions. Before model input, the worker bounds strings, redacts common tokens/passwords/keys/connection strings, and marks prompt-injection-like text. Raw Azure payloads, `alertContext`, and `customProperties` cannot enter model context.
+
+The five tools use strict empty Zod inputs, current-incident resource scope, injected providers, bounded strict outputs, and safe unavailable fallbacks. They offer no arbitrary resource identifier, URL, query language, filesystem, shell, network client, or write operation. Runbook references remain untrusted evidence text rather than navigation or remediation controls.
+
+The final result is parsed through the existing strict `triageResultSchema`. Evidence must exactly match sanitized tool evidence. Deterministic guards reject executable/command-like actions, SQL/scripts, secrets, fabricated evidence, and unsafe references. Every action remains human-review-only.
+
+The Agents SDK enables tracing in server runtimes, so the worker sets `tracingDisabled` unless `OPENAI_TRACING_ENABLED=true`. Sensitive trace data capture is always disabled. Explicit opt-in may still export workflow and tool operational metadata to OpenAI and therefore requires a privacy assessment. No secrets, raw alerts, raw logs, HMAC values, or Taski bodies are added to trace metadata.
+
+Taski incident and triage bodies are independently serialized once, signed over the exact bytes, and transmitted with redirects disabled, bounded timeouts/responses, and strict response schemas. Incident ingestion requires a bounded nullable analysis ID and exact analysis-status enum. Only an exact expected terminal identity suppresses triage; null, different-policy, and nonterminal identities remain eligible. There is no internal retry or autonomous remediation.
+
 ## Trust boundaries
 
 Azure Monitor payloads and queue messages are untrusted. The HTTP receiver validates Common Alert Schema, applies a byte bound, and normalizes to an allowlist. The processor independently validates the queue value before signing or networking.
@@ -39,6 +51,7 @@ Raw `alertContext`, `customProperties`, provider headers, authorization data, ta
 - Bounded response body
 - Strict 2xx response schema
 - Only `created`, `updated`, `duplicate`, and `stale` succeed
+- Every successful ingestion response requires safe `analysisId` and `analysisStatus` fields
 - 401, 429, 5xx, timeout, network failure, invalid JSON, unknown status, and extra response fields fail safely
 
 No response body, signature, secret, raw alert, normalized body, target resource ID, request headers, or stack trace is logged.
@@ -47,6 +60,8 @@ No response body, signature, secret, raw alert, normalized body, target resource
 
 Processor failures are thrown so the queue delivery is not acknowledged. The Azure Functions queue extension performs retry; no internal loop exists. `maxDequeueCount` is 5. After that, the runtime moves the message to `<queue-name>-poison`. Logging is limited to safe operational identifiers/categories. Operators must inspect safe metadata and fix configuration or code; no remediation is automatic.
 
+An accepted matching terminal identity prevents a retry from recreating a different result after a lost Taski response. It does not provide a distributed claim or lease, so simultaneous duplicate workers may both start paid analysis before either result is accepted. Exactly-once OpenAI execution is not claimed. Missing OpenAI execution configuration is converted, after fired-incident ingestion and stable policy identification, into a safe `model_unavailable` result without raw configuration values. Agents SDK tracing remains disabled by default.
+
 ## Remaining hardening
 
 - Deploy and verify Azure resources, RBAC, private networking, and managed identities
@@ -54,7 +69,7 @@ Processor failures are thrown so the queue delivery is not acknowledged. The Azu
 - Add Entra webhook protection, rate limiting, and operational monitoring
 - Add poison-queue operating procedures and privacy-aware telemetry
 - Add runtime secret scanning where required
-- Add only allowlisted read-only diagnostics in a later batch
-- Add strict OpenAI isolation and timeouts only in Batch 5 or later
+- Connect real allowlisted Azure diagnostic providers in Batch 6
+- Validate production model, privacy, tracing, RBAC, and poison-queue operations before deployment
 
 Zod validates shape and bounds; it does not establish that provider content is truthful. Taski remains responsible for participant authorization and durable incident persistence.
