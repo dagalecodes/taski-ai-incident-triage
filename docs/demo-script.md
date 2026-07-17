@@ -14,6 +14,15 @@ npm.cmd run --silent demo:triage -- --scenario model-failure
 
 Expected output is one JSON summary with safe correlation and status fields only. The default fired-created scenario runs deterministic guarded triage; duplicate-terminal, resolved, and stale skip it. `result-delivery-failure` exits nonzero with one safe error. No dry-run scenario uses the injected real transport.
 
+If the generic error needs a safe orchestration category, explicitly add `--diagnose-safe-stage`. This alone remains network-free:
+
+```powershell
+npm.cmd run --silent demo:triage -- --diagnose-safe-stage
+npm.cmd run --silent demo:triage -- --diagnose-safe-stage --scenario result-delivery-failure
+```
+
+Only fixed stage, numeric HTTP status when received, and existing safe pipeline category may be shown. The flag never enables networking or bypasses the two staging confirmations; omit it to retain the original generic failure output.
+
 The deterministic staging command below is for a later authorized session. **Do not run until manually authorized:**
 
 ```powershell

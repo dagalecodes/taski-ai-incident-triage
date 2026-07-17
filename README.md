@@ -16,6 +16,15 @@ npm.cmd run --silent demo:triage -- --scenario resolved
 
 Other network-free scenarios are `stale`, `model-failure`, and `result-delivery-failure`. Output is one safe JSON summary containing only mode, scenario, incident correlation/status, whether triage ran, safe delivery status, and safe analysis identity. It never prints diagnosis prose, request bodies, headers, signatures, raw responses, diagnostic context, keys, or secrets.
 
+For an explicitly requested safe failure category, add `--diagnose-safe-stage`. The flag does not enable delivery and does not replace either staging confirmation:
+
+```powershell
+npm.cmd run --silent demo:triage -- --diagnose-safe-stage
+npm.cmd run --silent demo:triage -- --diagnose-safe-stage --scenario result-delivery-failure
+```
+
+Diagnostic mode emits only a fixed stage identifier plus the last numeric Taski HTTP status and existing safe pipeline category when available. It never emits URLs, bodies, headers, credentials, signatures, diagnosis content, raw exceptions, or stacks. Without delivery flags it remains a network-free dry run; confirmed staging diagnostics still require both `--deliver-staging` and `--confirm-staging-delivery`.
+
 The following deterministic staging command is documented for later operator use only. **Do not run until manually authorized.** Both delivery flags are mandatory, OpenAI is not called, and the destination must be exactly `https://taski-staging.azurewebsites.net` or `http://localhost:3000`:
 
 ```powershell

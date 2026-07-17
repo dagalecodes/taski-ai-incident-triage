@@ -14,6 +14,7 @@ import type { TriageResult } from '../src/contracts/triageResult.js';
 import { createUnavailableDiagnosticProvider } from '../src/diagnostics/tools.js';
 import { deterministicAnalysisId, processIncident } from '../src/pipeline/processIncident.js';
 import { validateGuardedTriageResult } from '../src/security/triageGuardrails.js';
+import { SafePipelineError, type FailureCategory } from '../src/shared/safeErrors.js';
 
 const MAX_FIXTURE_BYTES = 256 * 1024;
 const DEFAULT_FIRED_FIXTURE = 'test/fixtures/azure-alert-fired.json';
@@ -35,6 +36,25 @@ interface DemoOptions {
   fixturePath: string;
   mode: DemoMode;
   scenario: DemoScenario;
+  diagnoseSafeStage: boolean;
+}
+
+export type SafeDiagnosticStage =
+  | 'argument_parsing'
+  | 'fixture'
+  | 'normalization'
+  | 'configuration'
+  | 'incident_ingestion'
+  | 'triage_execution'
+  | 'triage_delivery'
+  | 'safe_output'
+  | 'unknown';
+
+interface DiagnosticState {
+  enabled: boolean;
+  stage: SafeDiagnosticStage;
+  endpointClass: 'incident_ingestion' | 'triage_delivery' | null;
+  httpStatus: number | null;
 }
 
 export interface TriageDemoDependencies {
@@ -96,6 +116,7 @@ export function parseDemoArguments(arguments_: readonly string[]): DemoOptions {
   let confirmStaging = false;
   let useOpenAI = false;
   let confirmCharge = false;
+  let diagnoseSafeStage = false;
   const scenarios = new Set<DemoScenario>([
     'created', 'duplicate-terminal', 'resolved', 'stale', 'model-failure', 'result-delivery-failure',
   ]);
@@ -115,6 +136,7 @@ export function parseDemoArguments(arguments_: readonly string[]): DemoOptions {
     else if (argument === '--confirm-staging-delivery') confirmStaging = true;
     else if (argument === '--use-openai') useOpenAI = true;
     else if (argument === '--confirm-openai-charge') confirmCharge = true;
+    else if (argument === '--diagnose-safe-stage') diagnoseSafeStage = true;
     else throw new Error('Unknown option.');
   }
 
@@ -131,7 +153,7 @@ export function parseDemoArguments(arguments_: readonly string[]): DemoOptions {
     : (deliverStaging ? 'deterministic-staging' : 'dry-run');
   const selectedFixture = fixturePath
     ?? (scenario === 'resolved' ? DEFAULT_RESOLVED_FIXTURE : DEFAULT_FIRED_FIXTURE);
-  return { fixturePath: selectedFixture, mode, scenario };
+  return { fixturePath: selectedFixture, mode, scenario, diagnoseSafeStage };
 }
 
 export function validateStagingTaskiUrl(value: string): string {
@@ -204,10 +226,31 @@ function dryRunFetch(scenario: DemoScenario, expectedAnalysisId: string): typeof
   };
 }
 
+function diagnosticFetch(fetchImplementation: typeof fetch, state: DiagnosticState): typeof fetch {
+  return async (input, init) => {
+    const target = String(input);
+    if (target.endsWith('/azure-monitor')) {
+      state.endpointClass = 'incident_ingestion';
+      state.stage = 'incident_ingestion';
+    } else if (target.endsWith('/triage-results')) {
+      state.endpointClass = 'triage_delivery';
+      state.stage = 'triage_delivery';
+    } else {
+      state.endpointClass = null;
+      state.stage = 'unknown';
+    }
+    const response = await fetchImplementation(input, init);
+    state.httpStatus = response.status;
+    return response;
+  };
+}
+
 async function normalizedFixture(
   options: DemoOptions,
   dependencies: TriageDemoDependencies,
+  diagnostic: DiagnosticState,
 ): Promise<NormalizedIncident> {
+  diagnostic.stage = 'fixture';
   let fixtureText = await dependencies.readTextFile(resolve(options.fixturePath));
   if (Buffer.byteLength(fixtureText, 'utf8') > MAX_FIXTURE_BYTES) throw new Error('Fixture is too large.');
   let payload: unknown;
@@ -217,6 +260,7 @@ async function normalizedFixture(
     fixtureText = '';
   }
   const validated = azureMonitorCommonAlertSchema.parse(payload);
+  diagnostic.stage = 'normalization';
   const normalized = normalizeAzureAlert(validated, dependencies.currentTimestamp());
   if (options.scenario === 'resolved' && normalized.condition !== 'resolved') {
     throw new Error('Resolved scenario requires a resolved fixture.');
@@ -227,8 +271,9 @@ async function normalizedFixture(
 async function executeDemo(
   options: DemoOptions,
   dependencies: TriageDemoDependencies,
+  diagnostic: DiagnosticState,
 ): Promise<SafeDemoSummary> {
-  const incident = await normalizedFixture(options, dependencies);
+  const incident = await normalizedFixture(options, dependencies, diagnostic);
   let taskiBaseUrl = 'https://taski.example.invalid';
   let keyId = 'dry-run-key';
   let secret = 'dry-run-secret-0123456789abcdef0';
@@ -237,6 +282,7 @@ async function executeDemo(
   let fetchImplementation: typeof fetch;
   let createTriageRunner: () => TriageRunner;
 
+  diagnostic.stage = 'configuration';
   if (options.mode === 'dry-run') {
     const expectedId = deterministicAnalysisId(incident, policyVersion);
     fetchImplementation = dryRunFetch(options.scenario, expectedId);
@@ -265,15 +311,26 @@ async function executeDemo(
   }
 
   try {
+    diagnostic.stage = 'incident_ingestion';
+    const trackedFetch = diagnostic.enabled
+      ? diagnosticFetch(fetchImplementation, diagnostic)
+      : fetchImplementation;
     const processed = await processIncident(incident, {
       taskiBaseUrl, keyId, secret, timeoutMs,
     }, {
-      fetchImplementation,
+      fetchImplementation: trackedFetch,
       currentEpochSeconds: dependencies.currentEpochSeconds,
       currentIsoTimestamp: dependencies.currentIsoTimestamp,
-      resolveTriagePolicyVersion: () => policyVersion,
-      createTriageRunner,
+      resolveTriagePolicyVersion: () => {
+        diagnostic.stage = 'configuration';
+        return policyVersion;
+      },
+      createTriageRunner: () => {
+        diagnostic.stage = 'triage_execution';
+        return createTriageRunner();
+      },
     });
+    diagnostic.stage = 'safe_output';
     return {
       mode: options.mode,
       scenario: options.scenario,
@@ -293,17 +350,39 @@ async function executeDemo(
   }
 }
 
+function safeDiagnosticOutput(
+  state: DiagnosticState,
+  error?: unknown,
+): Record<string, string | number> {
+  const output: Record<string, string | number> = { stage: state.stage };
+  if (state.httpStatus !== null) output.httpStatus = state.httpStatus;
+  if (error instanceof SafePipelineError) output.category = error.category satisfies FailureCategory;
+  return output;
+}
+
 export async function runTriageDemo(
   arguments_: readonly string[],
   dependencies: TriageDemoDependencies = runtimeDependencies(),
 ): Promise<number> {
+  const diagnostic: DiagnosticState = {
+    enabled: arguments_.includes('--diagnose-safe-stage'),
+    stage: 'argument_parsing',
+    endpointClass: null,
+    httpStatus: null,
+  };
   try {
     const options = parseDemoArguments(arguments_);
-    const summary = await executeDemo(options, dependencies);
-    dependencies.writeOutput(`${JSON.stringify(summary)}\n`);
+    diagnostic.enabled = options.diagnoseSafeStage;
+    const summary = await executeDemo(options, dependencies, diagnostic);
+    const output = diagnostic.enabled ? safeDiagnosticOutput(diagnostic) : summary;
+    dependencies.writeOutput(`${JSON.stringify(output)}\n`);
     return 0;
-  } catch {
-    dependencies.writeError('Triage demo failed safely.\n');
+  } catch (error) {
+    if (diagnostic.enabled) {
+      dependencies.writeError(`${JSON.stringify(safeDiagnosticOutput(diagnostic, error))}\n`);
+    } else {
+      dependencies.writeError('Triage demo failed safely.\n');
+    }
     return 1;
   }
 }

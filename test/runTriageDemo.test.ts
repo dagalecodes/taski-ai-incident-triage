@@ -12,7 +12,12 @@ const forbiddenNetwork = vi.fn(async () => {
   throw new Error('Real network access is forbidden in tests.');
 });
 
-function dependencies(output: string[], errors: string[], environment: Record<string, string> = {}) {
+function dependencies(
+  output: string[],
+  errors: string[],
+  environment: Record<string, string> = {},
+  overrides: Partial<TriageDemoDependencies> = {},
+) {
   const result: TriageDemoDependencies = {
     async readTextFile(path) {
       const fixture = path.includes('resolved') ? 'azure-alert-resolved.json' : 'azure-alert-fired.json';
@@ -25,9 +30,17 @@ function dependencies(output: string[], errors: string[], environment: Record<st
     currentIsoTimestamp: () => '2026-07-16T10:01:00.000Z',
     writeOutput: value => output.push(value),
     writeError: value => errors.push(value),
+    ...overrides,
   };
   return result;
 }
+
+const stagingEnvironment = {
+  TASKI_INTERNAL_BASE_URL: 'https://taski-staging.azurewebsites.net',
+  TASKI_INCIDENT_KEY_ID: 'synthetic-key-id',
+  TASKI_INCIDENT_SECRET: '0123456789abcdef0123456789abcdef',
+  TRIAGE_POLICY_VERSION: 'policy-v1',
+};
 
 async function dryRun(arguments_: string[] = []) {
   const output: string[] = [];
@@ -167,6 +180,106 @@ describe('controlled Batch 5C triage demo', () => {
     expect(result.errors).toEqual(['Triage demo failed safely.\n']);
     expect(result.errors.join('')).not.toContain('simulated private failure');
     expect(forbiddenNetwork).not.toHaveBeenCalled();
+  });
+
+  it('diagnostic flag alone remains a network-free dry run with fixed safe output', async () => {
+    const result = await dryRun(['--diagnose-safe-stage']);
+    expect(result.code).toBe(0);
+    expect(result.summary).toEqual({ stage: 'safe_output', httpStatus: 200 });
+    expect(forbiddenNetwork).not.toHaveBeenCalled();
+  });
+
+  it('diagnostic flag does not bypass staging confirmation', async () => {
+    const result = await dryRun(['--diagnose-safe-stage', '--deliver-staging']);
+    expect(result.code).toBe(1);
+    expect(result.output).toEqual([]);
+    expect(JSON.parse(result.errors.join(''))).toEqual({ stage: 'argument_parsing' });
+    expect(forbiddenNetwork).not.toHaveBeenCalled();
+  });
+
+  it('reports only incident-ingestion stage, HTTP 400, and safe category', async () => {
+    const output: string[] = [];
+    const errors: string[] = [];
+    const responseBody = 'raw-secret simulated-error https://private.example.invalid';
+    const fetchImplementation = vi.fn(async () => new Response(responseBody, { status: 400 }));
+    const code = await runTriageDemo([
+      '--diagnose-safe-stage', '--deliver-staging', '--confirm-staging-delivery',
+    ], dependencies(output, errors, stagingEnvironment, {
+      fetchImplementation: fetchImplementation as unknown as typeof fetch,
+    }));
+    expect(code).toBe(1);
+    expect(output).toEqual([]);
+    expect(JSON.parse(errors.join(''))).toEqual({
+      stage: 'incident_ingestion', httpStatus: 400, category: 'remote',
+    });
+    expect(errors.join('')).not.toMatch(/raw-secret|simulated-error|private\.example|taski-staging|synthetic-key/);
+    expect(fetchImplementation).toHaveBeenCalledOnce();
+  });
+
+  it('reports only triage-delivery stage, HTTP 500, and safe category', async () => {
+    const output: string[] = [];
+    const errors: string[] = [];
+    const fetchImplementation = vi.fn(async (input: Parameters<typeof fetch>[0]) => {
+      if (String(input).endsWith('/azure-monitor')) {
+        return new Response(JSON.stringify({
+          status: 'created', incidentId: 7, messageId: 12, alertState: 'fired',
+          analysisId: null, analysisStatus: 'pending', version: 1,
+        }), { status: 201 });
+      }
+      return new Response('raw triage failure and private secret', { status: 500 });
+    });
+    const code = await runTriageDemo([
+      '--diagnose-safe-stage', '--deliver-staging', '--confirm-staging-delivery',
+    ], dependencies(output, errors, stagingEnvironment, {
+      fetchImplementation: fetchImplementation as unknown as typeof fetch,
+    }));
+    expect(code).toBe(1);
+    expect(output).toEqual([]);
+    expect(JSON.parse(errors.join(''))).toEqual({
+      stage: 'triage_delivery', httpStatus: 500, category: 'remote',
+    });
+    expect(errors.join('')).not.toMatch(/raw triage|private secret|taski-staging|synthetic-key/);
+    expect(fetchImplementation).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports fixed configuration and fixture stages without raw local errors', async () => {
+    const configurationOutput: string[] = [];
+    const configurationErrors: string[] = [];
+    const configurationCode = await runTriageDemo([
+      '--diagnose-safe-stage', '--deliver-staging', '--confirm-staging-delivery',
+    ], dependencies(configurationOutput, configurationErrors));
+    expect(configurationCode).toBe(1);
+    expect(JSON.parse(configurationErrors.join(''))).toEqual({ stage: 'configuration' });
+    expect(forbiddenNetwork).not.toHaveBeenCalled();
+
+    const fixtureOutput: string[] = [];
+    const fixtureErrors: string[] = [];
+    const fixtureCode = await runTriageDemo(
+      ['--diagnose-safe-stage'],
+      dependencies(fixtureOutput, fixtureErrors, {}, {
+        readTextFile: async () => { throw new Error('raw fixture secret and private path'); },
+      }),
+    );
+    expect(fixtureCode).toBe(1);
+    expect(JSON.parse(fixtureErrors.join(''))).toEqual({ stage: 'fixture' });
+    expect(fixtureErrors.join('')).not.toMatch(/raw fixture|private path|secret/);
+    expect(forbiddenNetwork).not.toHaveBeenCalled();
+  });
+
+  it('normal mode retains the original generic failure output', async () => {
+    const output: string[] = [];
+    const errors: string[] = [];
+    const fetchImplementation = vi.fn(async () => new Response(
+      'raw-secret simulated-error https://private.example.invalid', { status: 400 },
+    ));
+    const code = await runTriageDemo([
+      '--deliver-staging', '--confirm-staging-delivery',
+    ], dependencies(output, errors, stagingEnvironment, {
+      fetchImplementation: fetchImplementation as unknown as typeof fetch,
+    }));
+    expect(code).toBe(1);
+    expect(output).toEqual([]);
+    expect(errors).toEqual(['Triage demo failed safely.\n']);
   });
 
   it('reuses production normalization, pipeline, clients, signing, schemas, and guardrails', async () => {
