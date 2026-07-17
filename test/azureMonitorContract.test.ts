@@ -16,6 +16,48 @@ describe('Azure Monitor Common Alert Schema contract', () => {
     expect(azureMonitorCommonAlertSchema.safeParse(await fixture('azure-alert-resolved.json')).success).toBe(true);
   });
 
+  it('accepts Standard availability payloads and normalizes optional empty and null fields', async () => {
+    for (const name of [
+      'azure-alert-standard-availability-fired.json',
+      'azure-alert-standard-availability-resolved.json',
+    ]) {
+      const parsed = azureMonitorCommonAlertSchema.parse(await fixture(name));
+      expect(parsed.data.essentials.description).toBeUndefined();
+      expect(parsed.data.alertContext).toMatchObject({
+        conditionType: 'WebtestLocationAvailabilityCriteria', properties: null,
+      });
+      expect(parsed.data.customProperties).toBeUndefined();
+    }
+
+    const whitespaceDescription = structuredClone(await validFired());
+    whitespaceDescription.data.essentials.description = '   ';
+    expect(azureMonitorCommonAlertSchema.parse(whitespaceDescription).data.essentials.description).toBeUndefined();
+
+    const boundedDescription = structuredClone(await validFired());
+    boundedDescription.data.essentials.description = `  ${'x'.repeat(1_000)} \n`;
+    expect(azureMonitorCommonAlertSchema.parse(boundedDescription).data.essentials.description)
+      .toBe('x'.repeat(1_000));
+
+    const oversizedDescription = structuredClone(await validFired());
+    oversizedDescription.data.essentials.description = `  ${'x'.repeat(1_001)} \n`;
+    expect(azureMonitorCommonAlertSchema.safeParse(oversizedDescription).success).toBe(false);
+
+    const absentAndNull = structuredClone(await fixture('azure-alert-fired.json')) as {
+      data: {
+        essentials: { description?: string };
+        alertContext: unknown;
+        customProperties?: unknown;
+      };
+    };
+    delete absentAndNull.data.essentials.description;
+    absentAndNull.data.alertContext = null;
+    delete absentAndNull.data.customProperties;
+    const normalized = azureMonitorCommonAlertSchema.parse(absentAndNull);
+    expect(normalized.data.essentials.description).toBeUndefined();
+    expect(normalized.data.alertContext).toBeUndefined();
+    expect(normalized.data.customProperties).toBeUndefined();
+  });
+
   it('rejects the invalid fixture', async () => {
     expect(azureMonitorCommonAlertSchema.safeParse(await fixture('azure-alert-invalid.json')).success).toBe(false);
   });
@@ -47,5 +89,15 @@ describe('Azure Monitor Common Alert Schema contract', () => {
   it('normalizes monitorCondition case-insensitively', async () => {
     const parsed = azureMonitorCommonAlertSchema.parse(await fixture('azure-alert-malicious.json'));
     expect(parsed.data.essentials.monitorCondition).toBe('fired');
+  });
+
+  it('retains provider object and complete payload size limits', async () => {
+    const oversizedContext = structuredClone(await validFired());
+    oversizedContext.data.alertContext = { content: 'x'.repeat((32 * 1024) + 1) };
+    expect(azureMonitorCommonAlertSchema.safeParse(oversizedContext).success).toBe(false);
+
+    const oversizedPayload = structuredClone(await validFired()) as Record<string, unknown>;
+    oversizedPayload.padding = 'x'.repeat((256 * 1024) + 1);
+    expect(azureMonitorCommonAlertSchema.safeParse(oversizedPayload).success).toBe(false);
   });
 });

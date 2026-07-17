@@ -48,6 +48,13 @@ const boundedProviderObjectSchema = z.record(z.string().min(1).max(128), z.unkno
   }
 });
 
+const optionalProviderObjectSchema = boundedProviderObjectSchema.nullish()
+  .transform((value) => value ?? undefined);
+
+const optionalDescriptionSchema = z.string().trim().max(1_000)
+  .transform((value) => value.length === 0 ? undefined : value)
+  .optional();
+
 const essentialsSchema = z.object({
   alertId: boundedText(2_048),
   alertRule: boundedText(512),
@@ -58,7 +65,7 @@ const essentialsSchema = z.object({
   firedDateTime: isoTimestampSchema,
   resolvedDateTime: isoTimestampSchema.optional(),
   alertTargetIDs: z.array(boundedText(2_048)).min(1).max(20),
-  description: boundedText(1_000).optional(),
+  description: optionalDescriptionSchema,
   configurationItems: z.array(boundedText(256)).max(50).optional(),
 }).passthrough().superRefine((value, context) => {
   if (value.monitorCondition === 'resolved' && value.resolvedDateTime === undefined) {
@@ -70,14 +77,7 @@ const essentialsSchema = z.object({
   }
 });
 
-export const azureMonitorCommonAlertSchema = z.object({
-  schemaId: z.literal('azureMonitorCommonAlertSchema'),
-  data: z.object({
-    essentials: essentialsSchema,
-    alertContext: boundedProviderObjectSchema.optional(),
-    customProperties: boundedProviderObjectSchema.optional(),
-  }).passthrough(),
-}).passthrough().superRefine((value, context) => {
+const boundedAlertPayloadSchema = z.unknown().superRefine((value, context) => {
   try {
     if (canonicalJson(value).length > MAX_ALERT_JSON_CHARS) {
       context.addIssue({ code: 'custom', message: 'Alert payload is too large.' });
@@ -86,5 +86,16 @@ export const azureMonitorCommonAlertSchema = z.object({
     context.addIssue({ code: 'custom', message: 'Alert payload must contain JSON-compatible values.' });
   }
 });
+
+const commonAlertObjectSchema = z.object({
+  schemaId: z.literal('azureMonitorCommonAlertSchema'),
+  data: z.object({
+    essentials: essentialsSchema,
+    alertContext: optionalProviderObjectSchema,
+    customProperties: optionalProviderObjectSchema,
+  }).passthrough(),
+}).passthrough();
+
+export const azureMonitorCommonAlertSchema = boundedAlertPayloadSchema.pipe(commonAlertObjectSchema);
 
 export type AzureMonitorCommonAlert = z.infer<typeof azureMonitorCommonAlertSchema>;

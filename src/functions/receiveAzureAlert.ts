@@ -39,6 +39,7 @@ export async function receiveAzureAlertHandler(
 ): Promise<HttpResponseInit> {
   const contentType = request.headers.get('content-type');
   let bodyBytes: Uint8Array;
+  let validationCategories: readonly string[] = [];
   try {
     const bounded = await boundedBody(request);
     if (bounded === null) return { status: 413, jsonBody: { error: 'Alert payload is too large.' } };
@@ -52,6 +53,7 @@ export async function receiveAzureAlertHandler(
     {
       currentTimestamp: () => new Date().toISOString(),
       enqueue: (message) => context.extraOutputs.set(incidentQueueOutput, message),
+      reportValidationCategories: (categories) => { validationCategories = categories; },
     },
   );
   if (response.status === 202) {
@@ -60,7 +62,12 @@ export async function receiveAzureAlertHandler(
       condition: response.body.condition,
     });
   } else {
-    context.warn('Azure alert rejected.', { category: `http_${response.status}` });
+    const category = `http_${response.status}`;
+    if (response.status === 400 && validationCategories.length > 0) {
+      context.warn('Azure alert rejected.', { category, validationCategories });
+    } else {
+      context.warn('Azure alert rejected.', { category });
+    }
   }
   return { status: response.status, jsonBody: response.body };
 }
