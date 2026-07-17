@@ -56,6 +56,8 @@ Raw `alertContext`, `customProperties`, provider headers, authorization data, ta
 
 No response body, signature, secret, raw alert, normalized body, target resource ID, request headers, or stack trace is logged.
 
+The storage bindings use the host-owned `AzureWebJobsStorage` connection name. The application does not read or validate a storage credential and does not require a plaintext connection string. Preserve the deployed identity-based `AzureWebJobsStorage__*` settings and assigned storage roles. `.funcignore` excludes local settings, environment files, fixtures, tests, local dependencies, and documentation from deployment packaging; secrets must remain in Function App settings rather than source or deployment artifacts.
+
 ## Retry and poison handling
 
 Processor failures are thrown so the queue delivery is not acknowledged. The Azure Functions queue extension performs retry; no internal loop exists. `maxDequeueCount` is 5. After that, the runtime moves the message to `<queue-name>-poison`. Logging is limited to safe operational identifiers/categories. Operators must inspect safe metadata and fix configuration or code; no remediation is automatic.

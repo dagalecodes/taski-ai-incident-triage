@@ -87,7 +87,7 @@ Batch 4 implements a local Azure Functions-compatible queue-first pipeline:
 - exact-byte HMAC-SHA256 signing and bounded Taski HTTP forwarding;
 - deterministic tests with injected clocks and HTTP transport.
 
-It has not been deployed. No Azure resources, Function key, Action Group, live queue, OpenAI agent, diagnostic tools, AI diagnosis, Application Insights, or remediation are implemented by this batch.
+The Function code is deployment-ready but is not deployed by repository verification. Azure resource provisioning, configuration, deployment, trigger synchronization, and live smoke testing remain separate operator actions. No remediation is implemented.
 
 ## Batch 4 foundation flow
 
@@ -126,9 +126,8 @@ Copy `local.settings.example.json` to ignored `local.settings.json` only for fut
 
 ## Configuration
 
-Runtime settings are validated explicitly at invocation boundaries:
+Application-owned runtime settings are validated explicitly at invocation boundaries:
 
-- `AzureWebJobsStorage`
 - `AZURE_INCIDENT_QUEUE_NAME` (default documented value: `taski-incident-events`)
 - `TASKI_INTERNAL_BASE_URL` (HTTPS, except explicit localhost HTTP; no embedded credentials)
 - `TASKI_INCIDENT_KEY_ID`
@@ -138,6 +137,22 @@ Runtime settings are validated explicitly at invocation boundaries:
 The queue handler validates Taski transport first and persists the incident before consulting triage identity or OpenAI execution settings. Resolved, already-resolved, and stale alerts therefore do not require OpenAI configuration. For an eligible fired alert with a valid policy identity, missing or invalid OpenAI settings produce a bounded `model_unavailable` result for authenticated Taski delivery; raw values and validation details are never included.
 
 The Azure Function key used by a future Action Group authenticates access to the receiver URL. It is separate from the Taski HMAC secret used only by the queue processor. Production hardening should place the webhook behind appropriate Entra protection where practical.
+
+`AzureWebJobsStorage` is a Functions-host connection name, not an application secret contract. Both bindings reference that name, but application code never reads or validates it. Keep the Function App's existing identity-based `AzureWebJobsStorage__*` settings; do not add a plaintext connection string. Local emulation may use an ignored `local.settings.json` value.
+
+## Flex Consumption deployment readiness
+
+The deployment root is this repository root: `host.json` and `package.json` must remain here. `npm.cmd run build` compiles production source only to `dist/src`, and `package.json` discovers both registrations through `dist/src/functions/*.js`. Tests, fixtures, demo/replay scripts, local settings, environment files, documentation, local `node_modules`, and non-runtime compiled files are excluded by `.funcignore`.
+
+For the existing Linux Flex Consumption app, use Azure Functions Core Tools v4 from this root after all checks pass and after an authorized Azure CLI sign-in and subscription selection:
+
+```powershell
+func azure functionapp publish taski-ai-triage
+```
+
+Do not pass `--publish-local-settings`, `--nozip`, or publish-profile/basic-auth credentials. Core Tools uses the Flex-supported package deployment path and requests a Linux remote build, so Azure installs the lock-file-defined dependencies for the target platform. Verify Node.js 22+, npm, Core Tools v4, and Azure CLI 2.60+ first. Deployment is an operator action and was not run during this audit.
+
+Azure starts the Node worker and loads the `package.json` `main` glob; it does not use `npm start`. For a local Functions host, build first and run `func start` with Core Tools v4. All repository npm scripts use cross-platform Node package executables and contain no Windows-only shell commands.
 
 ## Retry behavior
 

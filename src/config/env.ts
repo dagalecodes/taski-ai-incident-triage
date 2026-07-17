@@ -18,7 +18,6 @@ const taskiUrlSchema = z.string().url().max(2_048).superRefine((value, context) 
 
 const environmentSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
-  AzureWebJobsStorage: z.string().min(1).max(8_192).optional(),
   AZURE_INCIDENT_QUEUE_NAME: queueNameSchema.optional(),
   TASKI_INTERNAL_BASE_URL: taskiUrlSchema.optional(),
   TASKI_INCIDENT_KEY_ID: z.string().min(1).max(128).optional(),
@@ -44,7 +43,7 @@ const environmentSchema = z.object({
 }).strict();
 
 const pipelineSettings = [
-  'AzureWebJobsStorage', 'AZURE_INCIDENT_QUEUE_NAME', 'TASKI_INTERNAL_BASE_URL',
+  'AZURE_INCIDENT_QUEUE_NAME', 'TASKI_INTERNAL_BASE_URL',
   'TASKI_INCIDENT_KEY_ID', 'TASKI_INCIDENT_SECRET',
   'OPENAI_API_KEY', 'OPENAI_MODEL', 'TRIAGE_POLICY_VERSION',
 ] as const;

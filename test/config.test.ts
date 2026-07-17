@@ -9,7 +9,6 @@ import {
 
 const fakeEnvironment = {
   NODE_ENV: 'test',
-  AzureWebJobsStorage: 'UseDevelopmentStorage=true',
   AZURE_INCIDENT_QUEUE_NAME: 'taski-incident-events',
   TASKI_INTERNAL_BASE_URL: 'https://taski.example.invalid/',
   TASKI_INCIDENT_KEY_ID: 'synthetic-key-id',
@@ -74,7 +73,17 @@ describe('Batch 5B runtime configuration contract', () => {
 
   it('reports missing field names only', () => {
     expect(() => validateEnvironment({ NODE_ENV: 'test' }, { requirePipelineSettings: true }))
-      .toThrow(/AzureWebJobsStorage.*AZURE_INCIDENT_QUEUE_NAME.*TASKI_INTERNAL_BASE_URL/);
+      .toThrow(/AZURE_INCIDENT_QUEUE_NAME.*TASKI_INTERNAL_BASE_URL/);
+  });
+
+  it('does not require or parse the host-owned AzureWebJobsStorage setting', () => {
+    expect(() => validateEnvironment(fakeEnvironment, { requirePipelineSettings: true })).not.toThrow();
+    expect(validateEnvironment({
+      ...fakeEnvironment,
+      AzureWebJobsStorage__accountName: 'synthetic-storage',
+      AzureWebJobsStorage__credential: 'managedidentity',
+      AzureWebJobsStorage__clientId: '00000000-0000-0000-0000-000000000000',
+    }, { requirePipelineSettings: true })).not.toHaveProperty('AzureWebJobsStorage');
   });
 
   it('never includes a supplied secret or invalid value in an error', () => {

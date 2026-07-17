@@ -58,6 +58,8 @@ The implementation uses the Azure Functions Node.js programming model v4:
 
 The registrations are thin. Deterministic receiver, processor, signing, and HTTP behavior live in independently tested modules.
 
+`AzureWebJobsStorage` is resolved by the Functions host. Application code neither reads it nor requires a plaintext value, so identity-based `AzureWebJobsStorage__*` settings remain compatible. The deployment package root contains `host.json`, `package.json`, the TypeScript build inputs needed for the Linux remote build, and production output under `dist/src`. `.funcignore` prevents tests, fixtures, local settings, local dependencies, docs, and development-only compiled files from entering the uploaded project package.
+
 ## Message boundaries
 
 The queue contains the strict normalized incident only. It contains no raw `alertContext`, `customProperties`, headers, Function key, Taski key, signature, secret, or OpenAI data. `messageEncoding: none` matches the plain canonical JSON string produced by the output binding. The trigger may expose valid JSON as an object; either representation is strictly revalidated.
