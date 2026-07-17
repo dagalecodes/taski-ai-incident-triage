@@ -1,0 +1,15 @@
+{
+  "schemaId": "azureMonitorCommonAlertSchema",
+  "data": {
+    "essentials": {
+      "alertId": "demo-alert-invalid",
+      "alertRule": "Invalid demo alert",
+      "severity": "Sev9",
+      "signalType": "Metric",
+      "monitorCondition": "Unknown",
+      "monitoringService": "Platform",
+      "firedDateTime": "not-a-timestamp",
+      "alertTargetIDs": []
+    }
+  }
+}

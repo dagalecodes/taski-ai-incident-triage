@@ -1,0 +1,41 @@
+{
+  "schemaId": "azureMonitorCommonAlertSchema",
+  "data": {
+    "essentials": {
+      "alertId": "/subscriptions/00000000-0000-0000-0000-000000000000/providers/Microsoft.AlertsManagement/alerts/synthetic-standard-availability-001",
+      "alertRule": "Synthetic Standard availability alert",
+      "severity": "Sev1",
+      "signalType": "Metric",
+      "monitorCondition": "Fired",
+      "monitoringService": "Platform",
+      "firedDateTime": "2026-07-15T13:06:00.000Z",
+      "alertTargetIDs": [
+        "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/synthetic-rg/providers/microsoft.insights/webtests/synthetic-standard-availability"
+      ],
+      "description": "",
+      "configurationItems": [
+        "synthetic-standard-availability"
+      ]
+    },
+    "alertContext": {
+      "conditionType": "WebtestLocationAvailabilityCriteria",
+      "condition": {
+        "windowSize": "PT5M",
+        "allOf": [
+          {
+            "metricName": "Failed Location",
+            "metricNamespace": null,
+            "operator": "GreaterThan",
+            "threshold": "2",
+            "timeAggregation": "Sum",
+            "dimensions": [],
+            "metricValue": 3,
+            "webTestName": "synthetic-standard-availability"
+          }
+        ]
+      },
+      "properties": null
+    },
+    "customProperties": null
+  }
+}

@@ -1,0 +1,16 @@
+.git*
+.vscode/
+.env*
+local.settings*.json
+node_modules/
+coverage/
+test/
+scripts/
+docs/
+README.md
+LICENSE
+vitest.config.ts
+dist/test/
+dist/scripts/
+dist/vitest.config.js
+*.log

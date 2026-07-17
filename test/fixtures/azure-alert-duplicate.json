@@ -1,0 +1,26 @@
+{
+  "data": {
+    "customProperties": {
+      "scenario": "buildathon-demo"
+    },
+    "alertContext": {
+      "observedValue": 0,
+      "conditionType": "SyntheticAvailability"
+    },
+    "essentials": {
+      "configurationItems": ["taski-demo-api"],
+      "description": "The disposable demo API is not responding successfully.",
+      "alertTargetIDs": [
+        "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/demo-rg/providers/Microsoft.Web/sites/taski-demo-api"
+      ],
+      "firedDateTime": "2026-07-15T08:00:00.000Z",
+      "monitoringService": "Platform",
+      "monitorCondition": "Fired",
+      "signalType": "Metric",
+      "severity": "Sev1",
+      "alertRule": "Demo API availability",
+      "alertId": "/subscriptions/00000000-0000-0000-0000-000000000000/providers/Microsoft.AlertsManagement/alerts/demo-alert-001"
+    }
+  },
+  "schemaId": "azureMonitorCommonAlertSchema"
+}
